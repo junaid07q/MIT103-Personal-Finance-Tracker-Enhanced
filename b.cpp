@@ -1,5 +1,6 @@
 #include <iostream>
 #include <string>
+#include <vector>
 #include <list>
 #include <stack>
 #include <algorithm>
@@ -7,12 +8,21 @@
 #include <sstream>
 #include <iomanip>
 #include <cstring>
-#include <vector>
-#include <list>
 
 using namespace std;
 
-// ----- SHA-256 Implementation (see previous messages for details) -----
+// --- Simple XOR encryption/decryption ---
+const char XOR_KEY = 0x5A; // Arbitrary key for XOR cipher
+
+string xorEncryptDecrypt(const string &input)
+{
+    string output = input;
+    for (size_t i = 0; i < input.size(); ++i)
+        output[i] = input[i] ^ XOR_KEY;
+    return output;
+}
+
+// --- SHA-256 Implementation ---
 typedef unsigned char uint8;
 typedef unsigned int uint32;
 
@@ -54,7 +64,6 @@ void sha256_transform(SHA256_CTX *ctx, const uint8 data[])
         m[i] = (data[j] << 24) | (data[j + 1] << 16) | (data[j + 2] << 8) | (data[j + 3]);
     for (; i < 64; ++i)
         m[i] = SIG1(m[i - 2]) + m[i - 7] + SIG0(m[i - 15]) + m[i - 16];
-
     a = ctx->state[0];
     b = ctx->state[1];
     c = ctx->state[2];
@@ -63,7 +72,6 @@ void sha256_transform(SHA256_CTX *ctx, const uint8 data[])
     f = ctx->state[5];
     g = ctx->state[6];
     h = ctx->state[7];
-
     for (i = 0; i < 64; ++i)
     {
         t1 = h + EP1(e) + CH(e, f, g) + k[i] + m[i];
@@ -77,7 +85,6 @@ void sha256_transform(SHA256_CTX *ctx, const uint8 data[])
         b = a;
         a = t1 + t2;
     }
-
     ctx->state[0] += a;
     ctx->state[1] += b;
     ctx->state[2] += c;
@@ -87,7 +94,6 @@ void sha256_transform(SHA256_CTX *ctx, const uint8 data[])
     ctx->state[6] += g;
     ctx->state[7] += h;
 }
-
 void sha256_init(SHA256_CTX *ctx)
 {
     ctx->count[0] = ctx->count[1] = 0;
@@ -100,7 +106,6 @@ void sha256_init(SHA256_CTX *ctx)
     ctx->state[6] = 0x1f83d9ab;
     ctx->state[7] = 0x5be0cd19;
 }
-
 void sha256_update(SHA256_CTX *ctx, const uint8 data[], size_t len)
 {
     size_t i, j;
@@ -122,7 +127,6 @@ void sha256_update(SHA256_CTX *ctx, const uint8 data[], size_t len)
         i = 0;
     memcpy(&ctx->buffer[j], &data[i], len - i);
 }
-
 void sha256_final(SHA256_CTX *ctx, uint8 hash[])
 {
     uint32 i, j;
@@ -136,7 +140,6 @@ void sha256_final(SHA256_CTX *ctx, uint8 hash[])
     for (i = 0; i < 32; i++)
         hash[i] = (ctx->state[i >> 2] >> ((3 - (i & 3)) * 8)) & 255;
 }
-
 std::string sha256(const std::string &input)
 {
     uint8 hash[32];
@@ -150,7 +153,7 @@ std::string sha256(const std::string &input)
     return result.str();
 }
 
-// ----- Transaction & User Classes -----
+// --- Transaction & User Classes ---
 vector<string> allowedCategories = {"food", "transport", "bills", "entertainment", "shopping", "health", "other"};
 const int RECENT_COUNT = 5;
 
@@ -173,22 +176,26 @@ struct User
     string username, passwordHash, role; // role: "admin" or "user"
 };
 
-// ----- File Handling -----
+// --- File Handling ---
 void saveTransactions(const list<Transaction> &transactions, const string &filename)
 {
-    ofstream file(filename);
+    ofstream file(filename, ios::binary);
     if (!file)
     {
         cout << "Error opening file for writing!" << endl;
         return;
     }
     for (const auto &t : transactions)
-        file << t.getDate() << "," << t.getCategory() << "," << t.getDescription() << "," << t.getAmount() << endl;
+    {
+        string line = t.getDate() + "," + t.getCategory() + "," + t.getDescription() + "," + to_string(t.getAmount());
+        line = xorEncryptDecrypt(line);
+        file << line << endl;
+    }
     file.close();
 }
 void loadTransactions(list<Transaction> &transactions, const string &filename)
 {
-    ifstream file(filename);
+    ifstream file(filename, ios::binary);
     if (!file)
     {
         cout << "(No saved transactions found, starting new...)\n";
@@ -197,6 +204,7 @@ void loadTransactions(list<Transaction> &transactions, const string &filename)
     string line;
     while (getline(file, line))
     {
+        line = xorEncryptDecrypt(line);
         size_t pos1 = line.find(',');
         size_t pos2 = line.find(',', pos1 + 1);
         size_t pos3 = line.find(',', pos2 + 1);
@@ -210,7 +218,6 @@ void loadTransactions(list<Transaction> &transactions, const string &filename)
     }
     file.close();
 }
-
 void saveUsers(const vector<User> &users, const string &filename)
 {
     ofstream file(filename);
@@ -242,7 +249,7 @@ void loadUsers(vector<User> &users, const string &filename)
     file.close();
 }
 
-// ----- Validation & UI -----
+// --- Validation & UI ---
 bool isValidDate(const string &date)
 {
     if (date.length() != 10 || date[2] != '/' || date[5] != '/')
@@ -299,11 +306,12 @@ void displayMenu(bool isAdmin)
     cout << "Enter choice: ";
 }
 
-// ----- Transaction Management -----
+// --- Transaction Management ---
 void addTransaction(list<Transaction> &transactions, stack<Transaction> &recentTransactions)
 {
     string date, category, description;
     float amount;
+
     cin.ignore();
     cout << "Enter date (DD/MM/YYYY): ";
     getline(cin, date);
@@ -312,16 +320,25 @@ void addTransaction(list<Transaction> &transactions, stack<Transaction> &recentT
         cout << "Invalid format or value. Try again (DD/MM/YYYY): ";
         getline(cin, date);
     }
+
     category = getValidCategory();
+
     cout << "Enter description: ";
     getline(cin, description);
+    while (description.empty() || description.find_first_not_of(' ') == string::npos || description.length() > 50)
+    {
+        cout << "Description must not be empty/too long (max 50 chars): ";
+        getline(cin, description);
+    }
+
     cout << "Enter amount: ";
-    while (!(cin >> amount))
+    while (!(cin >> amount) || amount <= 0)
     {
         cin.clear();
         cin.ignore(numeric_limits<streamsize>::max(), '\n');
-        cout << "Please enter a valid amount: ";
+        cout << "Amount must be a positive number. Enter amount: ";
     }
+
     Transaction t(date, category, description, amount);
     transactions.push_back(t);
 
@@ -347,7 +364,6 @@ void addTransaction(list<Transaction> &transactions, stack<Transaction> &recentT
     cout << "Transaction added.\n";
     cin.ignore();
 }
-
 void displayTransactions(const list<Transaction> &transactions)
 {
     if (transactions.empty())
@@ -420,7 +436,7 @@ void displayRecentTransactions(stack<Transaction> recentTransactions)
     }
 }
 
-// ----- User Authentication -----
+// --- User Authentication ---
 User loginUser(const vector<User> &users)
 {
     string uname, pass;
@@ -443,6 +459,11 @@ void registerUser(vector<User> &users, const string &filename, bool isAdmin = fa
     string uname, pass, pass2;
     cout << "Register a new " << (isAdmin ? "ADMIN" : "user") << "\nUsername: ";
     cin >> uname;
+    while (uname.empty() || uname.find_first_not_of(' ') == string::npos || uname.length() > 20)
+    {
+        cout << "Username must not be empty/too long (max 20 chars): ";
+        cin >> uname;
+    }
     for (const auto &u : users)
         if (u.username == uname)
         {
@@ -467,13 +488,13 @@ void registerUser(vector<User> &users, const string &filename, bool isAdmin = fa
     cout << (isAdmin ? "Admin" : "User") << " registered successfully!\n";
 }
 
-// ----- Main -----
+// --- Main ---
 int main()
 {
     list<Transaction> transactions;
     stack<Transaction> recentTransactions;
     vector<User> users;
-    string transactionsFile = "transactions.csv";
+    string transactionsFile = "data_trk.enc"; // Now encrypted!
     string usersFile = "users.csv";
 
     loadTransactions(transactions, transactionsFile);
