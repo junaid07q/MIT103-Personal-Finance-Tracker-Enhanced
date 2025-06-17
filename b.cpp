@@ -1,15 +1,18 @@
 #include <iostream>
 #include <string>
-#include <vector>
+#include <list>
+#include <stack>
 #include <algorithm>
 #include <fstream>
 #include <sstream>
 #include <iomanip>
-#include <cstring> // For SHA-256 implementation
+#include <cstring>
+#include <vector>
+#include <list>
 
 using namespace std;
 
-// ----- Pure C++ SHA-256 Implementation -----
+// ----- SHA-256 Implementation (see previous messages for details) -----
 typedef unsigned char uint8;
 typedef unsigned int uint32;
 
@@ -27,7 +30,6 @@ void sha256_final(SHA256_CTX *ctx, uint8 hash[]);
 
 #define ROTLEFT(a, b) ((a << b) | (a >> (32 - b)))
 #define ROTRIGHT(a, b) ((a >> b) | (a << (32 - b)))
-
 #define CH(x, y, z) ((x & y) ^ (~x & z))
 #define MAJ(x, y, z) ((x & y) ^ (x & z) ^ (y & z))
 #define EP0(x) (ROTRIGHT(x, 2) ^ ROTRIGHT(x, 13) ^ ROTRIGHT(x, 22))
@@ -147,10 +149,10 @@ std::string sha256(const std::string &input)
         result << std::hex << std::setw(2) << std::setfill('0') << (int)hash[i];
     return result.str();
 }
-// ----- End SHA-256 Implementation -----
 
 // ----- Transaction & User Classes -----
 vector<string> allowedCategories = {"food", "transport", "bills", "entertainment", "shopping", "health", "other"};
+const int RECENT_COUNT = 5;
 
 class Transaction
 {
@@ -172,7 +174,7 @@ struct User
 };
 
 // ----- File Handling -----
-void saveTransactions(const vector<Transaction> &transactions, const string &filename)
+void saveTransactions(const list<Transaction> &transactions, const string &filename)
 {
     ofstream file(filename);
     if (!file)
@@ -184,7 +186,7 @@ void saveTransactions(const vector<Transaction> &transactions, const string &fil
         file << t.getDate() << "," << t.getCategory() << "," << t.getDescription() << "," << t.getAmount() << endl;
     file.close();
 }
-void loadTransactions(vector<Transaction> &transactions, const string &filename)
+void loadTransactions(list<Transaction> &transactions, const string &filename)
 {
     ifstream file(filename);
     if (!file)
@@ -293,11 +295,12 @@ void displayMenu(bool isAdmin)
         cout << "2. Delete Transaction (Admin Only)\n";
     cout << "3. Display Transactions\n";
     cout << "4. Logout\n";
+    cout << "5. Display Recent Transactions\n";
     cout << "Enter choice: ";
 }
 
 // ----- Transaction Management -----
-void addTransaction(vector<Transaction> &transactions)
+void addTransaction(list<Transaction> &transactions, stack<Transaction> &recentTransactions)
 {
     string date, category, description;
     float amount;
@@ -319,54 +322,102 @@ void addTransaction(vector<Transaction> &transactions)
         cin.ignore(numeric_limits<streamsize>::max(), '\n');
         cout << "Please enter a valid amount: ";
     }
-    transactions.push_back(Transaction(date, category, description, amount));
+    Transaction t(date, category, description, amount);
+    transactions.push_back(t);
+
+    // Maintain stack for recent transactions
+    recentTransactions.push(t);
+    // If more than RECENT_COUNT, rebuild stack (simple, not optimal but works for small N)
+    if (recentTransactions.size() > RECENT_COUNT)
+    {
+        stack<Transaction> temp;
+        list<Transaction>::reverse_iterator rit = transactions.rbegin();
+        for (int i = 0; i < RECENT_COUNT && rit != transactions.rend(); ++i, ++rit)
+            temp.push(*rit);
+        // Rebuild correct order (most recent on top)
+        stack<Transaction> rebuild;
+        while (!temp.empty())
+        {
+            rebuild.push(temp.top());
+            temp.pop();
+        }
+        recentTransactions = rebuild;
+    }
+
     cout << "Transaction added.\n";
     cin.ignore();
 }
-void displayTransactions(const vector<Transaction> &transactions)
+
+void displayTransactions(const list<Transaction> &transactions)
 {
     if (transactions.empty())
     {
         cout << "No transactions to display.\n";
         return;
     }
-    for (size_t i = 0; i < transactions.size(); ++i)
+    int i = 0;
+    for (const auto &t : transactions)
     {
-        cout << "\nIndex: " << i
-            << "\nDate: " << transactions[i].getDate()
-            << "\nCategory: " << transactions[i].getCategory()
-            << "\nDescription: " << transactions[i].getDescription()
-            << "\nAmount: $" << transactions[i].getAmount()
-            << "\n--------------------------";
+        cout << "\nIndex: " << i++
+             << "\nDate: " << t.getDate()
+             << "\nCategory: " << t.getCategory()
+             << "\nDescription: " << t.getDescription()
+             << "\nAmount: $" << t.getAmount()
+             << "\n--------------------------";
     }
 }
-void deleteTransaction(vector<Transaction> &transactions)
+void deleteTransaction(list<Transaction> &transactions)
 {
     if (transactions.empty())
     {
         cout << "No transactions to delete.\n";
         return;
     }
-    for (size_t i = 0; i < transactions.size(); i++)
+    int i = 0;
+    for (const auto &t : transactions)
     {
-        cout << "Index: " << i << " | "
-            << transactions[i].getDate() << " | "
-            << transactions[i].getCategory() << " | "
-            << transactions[i].getDescription() << " | $"
-            << transactions[i].getAmount() << endl;
+        cout << "Index: " << i++
+             << " | " << t.getDate()
+             << " | " << t.getCategory()
+             << " | " << t.getDescription()
+             << " | $" << t.getAmount() << endl;
     }
     int index;
     cout << "Enter index to delete (0 to " << transactions.size() - 1 << "): ";
     cin >> index;
-    if (cin.fail() || index < 0 || (size_t)index >= transactions.size())
+    if (cin.fail() || index < 0 || index >= (int)transactions.size())
     {
         cin.clear();
         cin.ignore(numeric_limits<streamsize>::max(), '\n');
         cout << "Invalid index.\n";
         return;
     }
-    transactions.erase(transactions.begin() + index);
+    auto it = transactions.begin();
+    advance(it, index);
+    transactions.erase(it);
     cout << "Transaction deleted.\n";
+}
+
+void displayRecentTransactions(stack<Transaction> recentTransactions)
+{
+    if (recentTransactions.empty())
+    {
+        cout << "No recent transactions.\n";
+        return;
+    }
+    cout << "Recent Transactions (most recent first):\n";
+    int count = 0;
+    while (!recentTransactions.empty() && count < RECENT_COUNT)
+    {
+        Transaction t = recentTransactions.top();
+        cout << "\nDate: " << t.getDate()
+             << "\nCategory: " << t.getCategory()
+             << "\nDescription: " << t.getDescription()
+             << "\nAmount: $" << t.getAmount()
+             << "\n--------------------------";
+        recentTransactions.pop();
+        count++;
+    }
 }
 
 // ----- User Authentication -----
@@ -419,13 +470,29 @@ void registerUser(vector<User> &users, const string &filename, bool isAdmin = fa
 // ----- Main -----
 int main()
 {
-    vector<Transaction> transactions;
+    list<Transaction> transactions;
+    stack<Transaction> recentTransactions;
     vector<User> users;
     string transactionsFile = "transactions.csv";
     string usersFile = "users.csv";
 
     loadTransactions(transactions, transactionsFile);
     loadUsers(users, usersFile);
+
+    // On load, fill the recent transactions stack with last RECENT_COUNT
+    if (!transactions.empty())
+    {
+        stack<Transaction> temp;
+        auto rit = transactions.rbegin();
+        for (int i = 0; i < RECENT_COUNT && rit != transactions.rend(); ++i, ++rit)
+            temp.push(*rit);
+        // Proper stack order
+        while (!temp.empty())
+        {
+            recentTransactions.push(temp.top());
+            temp.pop();
+        }
+    }
 
     // Force creation of first admin if users file is empty
     if (users.empty())
@@ -478,7 +545,7 @@ int main()
         switch (choice)
         {
         case 1:
-            addTransaction(transactions);
+            addTransaction(transactions, recentTransactions);
             saveTransactions(transactions, transactionsFile);
             break;
         case 2:
@@ -499,6 +566,9 @@ int main()
             cout << "Logging out.\n";
             main();
             return 0;
+        case 5:
+            displayRecentTransactions(recentTransactions);
+            break;
         default:
             cout << "Invalid menu choice.\n";
         }
